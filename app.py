@@ -9,6 +9,7 @@ import json
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from video_search_agent import VideoSearchAgent
+from rag_agent import RAGAgent
 import tempfile
 import shutil
 
@@ -24,9 +25,18 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('static/highlights', exist_ok=True)
 os.makedirs('indexes', exist_ok=True)
 
-# Global agent instance
+# Global agent instances
 agent = None
+rag_agent = None
 current_index_path = None
+
+# Progress tracking for indexing
+indexing_progress = {
+    'current': 0,
+    'total': 0,
+    'current_video': '',
+    'status': 'idle'  # idle, processing, complete, error
+}
 
 def allowed_file(filename):
     """Check if file extension is allowed."""
@@ -69,7 +79,7 @@ def initialize_agent():
 @app.route('/api/index', methods=['POST'])
 def index_videos():
     """Index uploaded videos."""
-    global agent, current_index_path
+    global agent, current_index_path, indexing_progress
     
     if agent is None:
         return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
@@ -93,8 +103,19 @@ def index_videos():
         if not video_paths:
             return jsonify({'status': 'error', 'message': 'No valid video files'}), 400
         
-        # Process videos
-        agent.process_corpus(video_paths)
+        # Initialize progress tracking
+        indexing_progress = {
+            'current': 0,
+            'total': len(video_paths),
+            'current_video': '',
+            'status': 'processing'
+        }
+        
+        # Process videos with progress tracking
+        for idx, video_path in enumerate(video_paths):
+            indexing_progress['current'] = idx + 1
+            indexing_progress['current_video'] = os.path.basename(video_path)
+            agent.process_video(video_path)
         
         # Save index
         index_filename = request.form.get('index_name', 'default_index.json')
@@ -104,6 +125,9 @@ def index_videos():
         # Get statistics
         total_segments = sum(len(v['segments']) for v in agent.video_index)
         
+        # Mark as complete
+        indexing_progress['status'] = 'complete'
+        
         return jsonify({
             'status': 'success',
             'message': f'Indexed {len(video_paths)} video(s)',
@@ -112,6 +136,7 @@ def index_videos():
             'index_path': current_index_path
         })
     except Exception as e:
+        indexing_progress['status'] = 'error'
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/search', methods=['POST'])
@@ -165,7 +190,7 @@ def search():
 @app.route('/api/search-clip', methods=['POST'])
 def search_clip():
     """Search videos with video clip query."""
-    global agent, current_index_path
+    global agent, rag_agent, current_index_path
     
     if agent is None:
         return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
@@ -192,18 +217,52 @@ def search_clip():
             # Search with clip
             results = agent.search_by_video_clip(filepath, top_k=top_k)
             
+            # Additional filtering: remove results with very low similarity
+            # This helps prevent irrelevant results from being returned
+            min_acceptable_similarity = 0.60  # Minimum acceptable similarity score
+            filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
+            
+            if not filtered_results and results:
+                # If all results were filtered but we had some, return empty with message
+                return jsonify({
+                    'status': 'success',
+                    'message': 'No results found above minimum similarity threshold (0.60). The uploaded clip may not be relevant to the indexed videos.',
+                    'results': [],
+                    'count': 0
+                })
+            
             # Format results
             formatted_results = []
-            for i, result in enumerate(results, 1):
+            for i, result in enumerate(filtered_results, 1):
                 formatted_results.append({
                     'rank': i,
                     'similarity': round(result['similarity'], 3),
                     'video_id': result['video_id'],
                     'start_time': round(result['start'], 2),
                     'end_time': round(result['end'], 2),
-                    'text': result['segment']['text'],
+                    'text': result['segment'].get('text', ''),
                     'duration': round(result['end'] - result['start'], 2)
                 })
+            
+            # Generate answer using RAG if available
+            answer = None
+            if rag_agent and results:
+                try:
+                    # Initialize RAG agent if needed
+                    if rag_agent is None:
+                        openai_api_key = os.getenv('OPENAI_API_KEY')
+                        rag_agent = RAGAgent(
+                            video_search_agent=agent,
+                            openai_api_key=openai_api_key,
+                            model='gpt-3.5-turbo',
+                            use_openai=True
+                        )
+                    # Create a question from the search context
+                    question = "What information is in the video segments similar to the uploaded clip?"
+                    rag_result = rag_agent.query_with_custom_context(question, results)
+                    answer = rag_result.get('answer', '')
+                except Exception as e:
+                    print(f"  ⚠ RAG answer generation failed: {e}")
             
             # Clean up query file
             if os.path.exists(filepath):
@@ -212,7 +271,8 @@ def search_clip():
             return jsonify({
                 'status': 'success',
                 'results': formatted_results,
-                'count': len(formatted_results)
+                'count': len(formatted_results),
+                'answer': answer
             })
         else:
             return jsonify({'status': 'error', 'message': 'Invalid file format'}), 400
@@ -222,7 +282,7 @@ def search_clip():
 @app.route('/api/search-audio', methods=['POST'])
 def search_audio():
     """Search videos with audio query."""
-    global agent, current_index_path
+    global agent, rag_agent, current_index_path
     
     if agent is None:
         return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
@@ -262,6 +322,31 @@ def search_audio():
                     'duration': round(result['end'] - result['start'], 2)
                 })
             
+            # Generate answer using RAG if available
+            answer = None
+            if rag_agent and results:
+                try:
+                    # Initialize RAG agent if needed
+                    if rag_agent is None:
+                        openai_api_key = os.getenv('OPENAI_API_KEY')
+                        rag_agent = RAGAgent(
+                            video_search_agent=agent,
+                            openai_api_key=openai_api_key,
+                            model='gpt-3.5-turbo',
+                            use_openai=True
+                        )
+                    # Transcribe audio to create a question
+                    transcript_result = agent.whisper_model.transcribe(filepath)
+                    query_text = transcript_result.get('text', '').strip()
+                    if query_text:
+                        question = f"Based on the video content, what information relates to: {query_text}?"
+                    else:
+                        question = "What information is in the video segments similar to the uploaded audio?"
+                    rag_result = rag_agent.query_with_custom_context(question, results)
+                    answer = rag_result.get('answer', '')
+                except Exception as e:
+                    print(f"  ⚠ RAG answer generation failed: {e}")
+            
             # Clean up query file
             if os.path.exists(filepath):
                 os.remove(filepath)
@@ -269,7 +354,8 @@ def search_audio():
             return jsonify({
                 'status': 'success',
                 'results': formatted_results,
-                'count': len(formatted_results)
+                'count': len(formatted_results),
+                'answer': answer
             })
         else:
             return jsonify({'status': 'error', 'message': 'Invalid audio file format'}), 400
@@ -279,7 +365,7 @@ def search_audio():
 @app.route('/api/search-image', methods=['POST'])
 def search_image():
     """Search videos with image query."""
-    global agent, current_index_path
+    global agent, rag_agent, current_index_path
     
     if agent is None:
         return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
@@ -306,9 +392,22 @@ def search_image():
             # Search with image
             results = agent.search_by_image(filepath, top_k=top_k)
             
+            # Additional filtering: remove results with very low similarity
+            min_acceptable_similarity = 0.65  # Minimum acceptable similarity for image search
+            filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
+            
+            if not filtered_results and results:
+                # If all results were filtered but we had some, return empty with message
+                return jsonify({
+                    'status': 'success',
+                    'message': 'No results found above minimum similarity threshold (0.65). The uploaded image may not be relevant to the indexed videos.',
+                    'results': [],
+                    'count': 0
+                })
+            
             # Format results
             formatted_results = []
-            for i, result in enumerate(results, 1):
+            for i, result in enumerate(filtered_results, 1):
                 formatted_results.append({
                     'rank': i,
                     'similarity': round(result['similarity'], 3),
@@ -319,6 +418,26 @@ def search_image():
                     'duration': round(result['end'] - result['start'], 2)
                 })
             
+            # Generate answer using RAG if available
+            answer = None
+            if rag_agent and results:
+                try:
+                    # Initialize RAG agent if needed
+                    if rag_agent is None:
+                        openai_api_key = os.getenv('OPENAI_API_KEY')
+                        rag_agent = RAGAgent(
+                            video_search_agent=agent,
+                            openai_api_key=openai_api_key,
+                            model='gpt-3.5-turbo',
+                            use_openai=True
+                        )
+                    # Create a question from the image search context
+                    question = "What information is in the video segments that are visually similar to the uploaded image?"
+                    rag_result = rag_agent.query_with_custom_context(question, results)
+                    answer = rag_result.get('answer', '')
+                except Exception as e:
+                    print(f"  ⚠ RAG answer generation failed: {e}")
+            
             # Clean up query file
             if os.path.exists(filepath):
                 os.remove(filepath)
@@ -326,7 +445,8 @@ def search_image():
             return jsonify({
                 'status': 'success',
                 'results': formatted_results,
-                'count': len(formatted_results)
+                'count': len(formatted_results),
+                'answer': answer
             })
         else:
             return jsonify({'status': 'error', 'message': 'Invalid image file format'}), 400
@@ -465,13 +585,79 @@ def preview_segment():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/rag-query', methods=['POST'])
+def rag_query():
+    """Answer questions using RAG (Retrieval-Augmented Generation)."""
+    global agent, rag_agent, current_index_path
+    
+    try:
+        if agent is None:
+            return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
+        
+        if not current_index_path or not os.path.exists(current_index_path):
+            return jsonify({'status': 'error', 'message': 'No index found. Please index videos first.'}), 400
+        
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'status': 'error', 'message': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if data is None:
+            return jsonify({'status': 'error', 'message': 'Invalid JSON in request'}), 400
+        
+        question = data.get('question', '')
+        top_k = int(data.get('top_k', 5))
+        use_openai = data.get('use_openai', True)
+        openai_api_key = data.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
+        model = data.get('model', 'gpt-3.5-turbo')
+        
+        if not question:
+            return jsonify({'status': 'error', 'message': 'Question is required'}), 400
+        
+        # Load index if needed
+        if not agent.video_index:
+            agent.load_index(current_index_path)
+        
+        # Initialize or update RAG agent if needed
+        try:
+            if rag_agent is None or (use_openai and not rag_agent.use_openai):
+                rag_agent = RAGAgent(
+                    video_search_agent=agent,
+                    openai_api_key=openai_api_key,
+                    model=model,
+                    use_openai=use_openai
+                )
+            elif use_openai and rag_agent.model != model:
+                # Update model if changed
+                rag_agent.model = model
+        except Exception as rag_init_error:
+            return jsonify({'status': 'error', 'message': f'Failed to initialize RAG agent: {str(rag_init_error)}'}), 500
+        
+        # Query with RAG
+        result = rag_agent.query(question, top_k=top_k)
+        
+        # Format response
+        return jsonify({
+            'status': 'success',
+            'question': question,
+            'answer': result['answer'],
+            'sources': result['sources'],
+            'retrieval_count': result['retrieval_count']
+        })
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"RAG Query Error: {error_trace}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get current status of the agent."""
-    global agent, current_index_path
+    global agent, rag_agent, current_index_path
     
     status = {
         'agent_initialized': agent is not None,
+        'rag_agent_initialized': rag_agent is not None,
         'index_loaded': False,
         'videos_count': 0,
         'segments_count': 0
@@ -484,6 +670,113 @@ def get_status():
     
     return jsonify(status)
 
+@app.route('/api/indexing-progress', methods=['GET'])
+def get_indexing_progress():
+    """Get current indexing progress."""
+    global indexing_progress
+    progress_percent = 0
+    if indexing_progress['total'] > 0:
+        progress_percent = int((indexing_progress['current'] / indexing_progress['total']) * 100)
+    
+    return jsonify({
+        'progress': progress_percent,
+        'current': indexing_progress['current'],
+        'total': indexing_progress['total'],
+        'current_video': indexing_progress['current_video'],
+        'status': indexing_progress['status']
+    })
+
+@app.route('/api/videos', methods=['GET'])
+def get_videos():
+    """Get list of all indexed videos."""
+    global agent, current_index_path
+    
+    # Try to load index if agent exists but index is empty
+    if agent is not None and (not agent.video_index or len(agent.video_index) == 0):
+        # Try to load from default index if available
+        default_index = os.path.join('indexes', 'default_index.json')
+        if current_index_path and os.path.exists(current_index_path):
+            try:
+                agent.load_index(current_index_path)
+            except Exception as e:
+                print(f"Error loading index: {e}")
+        elif os.path.exists(default_index):
+            try:
+                agent.load_index(default_index)
+                current_index_path = default_index
+            except Exception as e:
+                print(f"Error loading default index: {e}")
+    
+    if agent is None:
+        return jsonify({'status': 'success', 'videos': [], 'message': 'Agent not initialized'})
+    
+    if not agent.video_index or len(agent.video_index) == 0:
+        return jsonify({'status': 'success', 'videos': [], 'message': 'No videos indexed yet'})
+    
+    videos = []
+    for video_data in agent.video_index:
+        videos.append({
+            'video_id': video_data.get('video_id', 'Unknown'),
+            'video_path': video_data.get('video_path', ''),
+            'filename': os.path.basename(video_data.get('video_path', '')),
+            'duration': video_data.get('duration', 0),
+            'segments_count': len(video_data.get('segments', [])),
+            'language': video_data.get('language', 'Unknown'),
+            'has_audio': video_data.get('has_audio', False)
+        })
+    
+    return jsonify({
+        'status': 'success',
+        'videos': videos,
+        'total': len(videos)
+    })
+
+@app.route('/api/video/<path:filename>', methods=['GET'])
+def serve_video(filename):
+    """Serve video file for playback."""
+    try:
+        # Security: ensure filename doesn't contain path traversal
+        safe_filename = secure_filename(os.path.basename(filename))
+        
+        # First try the uploads folder with the safe filename
+        video_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_filename)
+        
+        # If not found, check if the video_path from index is a full path
+        if not os.path.exists(video_path):
+            # Try to find the video by checking the index
+            global agent
+            if agent and agent.video_index:
+                for video_data in agent.video_index:
+                    stored_path = video_data.get('video_path', '')
+                    stored_filename = os.path.basename(stored_path)
+                    if stored_filename == safe_filename or stored_filename == filename:
+                        # Use the stored path if it exists
+                        if os.path.exists(stored_path):
+                            video_path = stored_path
+                            break
+                        # Otherwise try uploads folder with stored filename
+                        elif os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)):
+                            video_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+                            break
+        
+        if not os.path.exists(video_path):
+            return jsonify({'status': 'error', 'message': f'Video file not found: {safe_filename}'}), 404
+        
+        # Determine MIME type based on file extension
+        ext = os.path.splitext(video_path)[1].lower()
+        mime_types = {
+            '.mp4': 'video/mp4',
+            '.mov': 'video/quicktime',
+            '.avi': 'video/x-msvideo',
+            '.mkv': 'video/x-matroska',
+            '.webm': 'video/webm'
+        }
+        mimetype = mime_types.get(ext, 'video/mp4')
+        
+        return send_file(video_path, mimetype=mimetype)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 if __name__ == '__main__':
     # Initialize agent on startup with OpenAI embeddings for better quality
     try:
@@ -494,15 +787,45 @@ if __name__ == '__main__':
             openai_api_key = None
         agent = VideoSearchAgent(model_size='base', use_openai=True, openai_api_key=openai_api_key)
         print("✓ Video Search Agent initialized with OpenAI embeddings")
+        
+        # Try to load default index if it exists
+        default_index = os.path.join('indexes', 'default_index.json')
+        if os.path.exists(default_index):
+            try:
+                agent.load_index(default_index)
+                current_index_path = default_index
+                print(f"✓ Loaded default index: {len(agent.video_index)} videos")
+            except Exception as e:
+                print(f"⚠ Could not load default index: {e}")
+        
+        # Initialize RAG agent
+        try:
+            rag_agent = RAGAgent(
+                video_search_agent=agent,
+                openai_api_key=openai_api_key,
+                model='gpt-3.5-turbo',
+                use_openai=True
+            )
+        except Exception as rag_e:
+            print(f"⚠ Warning: Could not initialize RAG agent: {rag_e}")
+            rag_agent = None
     except Exception as e:
         print(f"⚠ Warning: Could not initialize agent with OpenAI: {e}")
         print("   Falling back to sentence-transformers...")
         try:
             agent = VideoSearchAgent(model_size='base', use_openai=False)
             print("✓ Video Search Agent initialized (using sentence-transformers)")
+            # Initialize RAG agent without OpenAI
+            rag_agent = RAGAgent(
+                video_search_agent=agent,
+                openai_api_key=None,
+                model='gpt-3.5-turbo',
+                use_openai=False
+            )
         except Exception as e2:
             print(f"⚠ Warning: Could not initialize agent: {e2}")
             print("   Agent will be initialized on first use")
+            rag_agent = None
     
     print("\n" + "="*70)
     print("🚀 Starting Video Search Agent Web Server")

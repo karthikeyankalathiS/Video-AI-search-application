@@ -84,13 +84,13 @@ class VideoSearchAgent:
         # Similarity threshold - filter results below this score
         # Lower threshold = more results (but may include irrelevant ones)
         # Higher threshold = fewer but more relevant results
-        # Note: For OpenAI embeddings, use 0.3-0.4. For sentence-transformers, use 0.2-0.25
+        # Increased thresholds for better relevance and accuracy
         if self.use_openai_embeddings:
-            self.similarity_threshold = 0.35  # Higher threshold for OpenAI (better quality embeddings)
-            self.visual_similarity_threshold = 0.65  # Much higher threshold for CLIP visual embeddings (strict for image search)
+            self.similarity_threshold = 0.55  # Increased from 0.45 for stricter relevance
+            self.visual_similarity_threshold = 0.75  # Increased from 0.70 for stricter image matching
         else:
-            self.similarity_threshold = 0.2   # Lower threshold for sentence-transformers
-            self.visual_similarity_threshold = 0.55  # Higher threshold for CLIP visual embeddings (strict for image search)
+            self.similarity_threshold = 0.45   # Increased from 0.35 for stricter relevance
+            self.visual_similarity_threshold = 0.70  # Increased from 0.65 for stricter image matching
         
         # Load CLIP model for visual embeddings (for mute videos and image queries)
         self.clip_model = None
@@ -243,56 +243,96 @@ class VideoSearchAgent:
         return output_path
     
     def _create_visual_embeddings(self, key_frames: List[Dict]) -> List[np.ndarray]:
-        """Generate visual embeddings using CLIP model with normalization."""
+        """Generate visual embeddings using CLIP model with normalization.
+        Enhanced: Groups frames by segment and averages them for better representation."""
         if not self.has_clip or self.clip_model is None:
             return []
         
-        visual_embeddings = []
+        # Group frames by segment_id
+        frames_by_segment = {}
         for frame_data in key_frames:
-            try:
-                # Convert frame array to PIL Image and ensure RGB format
-                frame_image = Image.fromarray(frame_data["frame"]).convert("RGB")
-                
-                # CLIP processor handles resizing and normalization
-                inputs = self.clip_processor(images=frame_image, return_tensors="pt")
-                
-                # Generate embedding
-                with torch.no_grad():
-                    visual_features = self.clip_model.get_image_features(**inputs)
-                
-                embedding = visual_features[0].cpu().numpy()
-                
-                # Normalize embedding for consistent cosine similarity calculations
-                norm = np.linalg.norm(embedding)
+            seg_id = frame_data.get("segment_id", 0)
+            if seg_id not in frames_by_segment:
+                frames_by_segment[seg_id] = []
+            frames_by_segment[seg_id].append(frame_data)
+        
+        visual_embeddings = []
+        segment_ids = sorted(frames_by_segment.keys())
+        
+        for seg_id in segment_ids:
+            segment_frames = frames_by_segment[seg_id]
+            segment_embeddings = []
+            
+            for frame_data in segment_frames:
+                try:
+                    # Convert frame array to PIL Image and ensure RGB format
+                    frame_image = Image.fromarray(frame_data["frame"]).convert("RGB")
+                    
+                    # CLIP processor handles resizing and normalization
+                    inputs = self.clip_processor(images=frame_image, return_tensors="pt")
+                    
+                    # Generate embedding
+                    with torch.no_grad():
+                        visual_features = self.clip_model.get_image_features(**inputs)
+                    
+                    embedding = visual_features[0].cpu().numpy()
+                    
+                    # Normalize embedding
+                    norm = np.linalg.norm(embedding)
+                    if norm > 1e-8:
+                        embedding = embedding / norm
+                        segment_embeddings.append(embedding)
+                except Exception as e:
+                    print(f"    ⚠ Visual embedding failed for frame: {e}")
+                    continue
+            
+            # Average embeddings from multiple frames in the same segment
+            if segment_embeddings:
+                avg_embedding = np.mean(segment_embeddings, axis=0)
+                # Re-normalize after averaging
+                norm = np.linalg.norm(avg_embedding)
                 if norm > 1e-8:
-                    embedding = embedding / norm
-                else:
-                    # Invalid embedding, use zero vector (will be skipped in search)
-                    embedding = np.zeros(512)
-                
-                visual_embeddings.append(embedding)
-            except Exception as e:
-                # Use zero vector if processing fails (will be skipped in search)
-                print(f"    ⚠ Visual embedding failed for frame: {e}")
-                visual_embeddings.append(np.zeros(512))  # CLIP base model outputs 512-dim
+                    avg_embedding = avg_embedding / norm
+                visual_embeddings.append(avg_embedding)
+            else:
+                # No valid embeddings for this segment
+                visual_embeddings.append(np.zeros(512))
         
         return visual_embeddings
     
-    def _extract_key_frames(self, video_path: str, segments: List[Dict], frames_per_segment: int = 1) -> List[Dict]:
-        """Extract key frames at segment timestamps."""
+    def _extract_key_frames(self, video_path: str, segments: List[Dict], frames_per_segment: int = 3) -> List[Dict]:
+        """Extract multiple key frames per segment for better visual representation."""
         video = VideoFileClip(video_path)
         key_frames = []
         
         for segment in segments:
-            # Extract frame at segment midpoint
-            mid_time = (segment["start"] + segment["end"]) / 2
-            if mid_time < video.duration:
-                frame = video.get_frame(mid_time)
-                key_frames.append({
-                    "timestamp": mid_time,
-                    "segment_id": segment.get("id", 0),
-                    "frame": frame
-                })
+            start = segment["start"]
+            end = segment["end"]
+            duration = end - start
+            
+            # Extract multiple frames: start, middle, end (for better representation)
+            frame_times = []
+            if duration > 2:
+                # For longer segments, extract 3 frames
+                frame_times = [start, (start + end) / 2, end - 0.1]
+            elif duration > 0.5:
+                # For medium segments, extract 2 frames
+                frame_times = [start, (start + end) / 2]
+            else:
+                # For short segments, extract 1 frame
+                frame_times = [(start + end) / 2]
+            
+            for frame_time in frame_times:
+                if 0 <= frame_time < video.duration:
+                    try:
+                        frame = video.get_frame(frame_time)
+                        key_frames.append({
+                            "timestamp": frame_time,
+                            "segment_id": segment.get("id", 0),
+                            "frame": frame
+                        })
+                    except:
+                        continue
         
         video.close()
         return key_frames
@@ -383,7 +423,8 @@ class VideoSearchAgent:
                 "text": transcript_text,
                 "on_screen_text": ocr_text,
                 "embedding": embedding.tolist(),
-                "combined_text": combined_text
+                "combined_text": combined_text,
+                "has_content": bool(text_embedding is not None or visual_embedding is not None)  # Mark if segment has any content
             }
             
             # Store visual embedding separately for visual search
@@ -428,6 +469,8 @@ class VideoSearchAgent:
     def search_by_text(self, query: str, top_k: int = 5, min_similarity: float = None) -> List[Dict]:
         """
         Search for relevant segments using a text query.
+        Uses hybrid search: text embeddings for videos with audio/OCR, 
+        and CLIP text-to-visual embeddings for mute videos.
         
         Args:
             query: Natural language query
@@ -438,16 +481,54 @@ class VideoSearchAgent:
         """
         print(f"\nSearching with text query: '{query}'")
         
-        # Create query embedding
-        query_embedding = self._get_text_embedding(query)
-        
-        # Use helper method for search
+        # Create text query embedding
+        text_query_embedding = self._get_text_embedding(query)
         min_sim = min_similarity if min_similarity is not None else self.similarity_threshold
-        return self._search_with_embedding(query_embedding, top_k, min_similarity=min_sim)
+        
+        # Search with text embeddings (for videos with audio/OCR)
+        text_results = self._search_with_embedding(text_query_embedding, top_k * 2, min_similarity=min_sim)
+        
+        # Also search mute videos using CLIP text-to-visual if available
+        visual_results = []
+        if self.has_clip and self.clip_model:
+            try:
+                print("  [Hybrid] Converting text query to visual embedding for mute video search...")
+                # Convert text query to visual embedding using CLIP's text encoder
+                visual_query_embedding = self._get_clip_text_embedding(query)
+                if visual_query_embedding is not None:
+                    print(f"  [Hybrid] Visual query embedding created (dim: {len(visual_query_embedding)})")
+                    # Increased threshold for text-to-visual search for better relevance
+                    # CLIP text-to-visual similarity is typically lower than image-to-image, but we still need quality
+                    # For relevant matches, we expect at least 0.30-0.35 similarity
+                    visual_threshold = 0.35  # Increased from 0.25 for better relevance
+                    print(f"  [Hybrid] Searching mute videos with threshold: {visual_threshold:.2f}")
+                    visual_results = self._search_with_visual_embedding(
+                        visual_query_embedding, 
+                        top_k * 2, 
+                        min_similarity=visual_threshold,
+                        mute_videos_only=True  # Only search mute videos
+                    )
+                    if visual_results:
+                        print(f"  ✓ Found {len(visual_results)} segment(s) in mute videos via visual search")
+                    else:
+                        print(f"  ⚠ No mute video segments found above threshold {visual_threshold:.2f}")
+                        # Don't use fallback with very low threshold - better to return no results than irrelevant ones
+                else:
+                    print("  ⚠ Failed to create visual query embedding from text")
+            except Exception as e:
+                import traceback
+                print(f"  ⚠ Visual search failed: {e}")
+                print(f"  Traceback: {traceback.format_exc()}")
+        
+        # Combine and deduplicate results
+        combined_results = self._merge_search_results(text_results, visual_results, top_k)
+        
+        return combined_results
     
     def search_by_video_clip(self, clip_path: str, top_k: int = 5) -> List[Dict]:
         """
         Search for relevant segments using a sample video clip.
+        Enhanced with multi-modal matching (text + visual) for better accuracy.
         
         Args:
             clip_path: Path to the query video clip
@@ -464,38 +545,97 @@ class VideoSearchAgent:
         if not clip_data["segments"]:
             return []
         
-        # Use the first segment's embedding as query (or average of all segments)
-        clip_embeddings = [np.array(s["embedding"]) for s in clip_data["segments"]]
-        query_embedding = np.mean(clip_embeddings, axis=0)
+        # Enhanced: Use both text and visual embeddings for better matching
+        clip_text_embeddings = []
+        clip_visual_embeddings = []
         
-        # Normalize query embedding for efficient cosine similarity calculation
-        query_embedding = query_embedding / (np.linalg.norm(query_embedding) + 1e-8)
+        for s in clip_data["segments"]:
+            # Collect text embeddings
+            if "embedding" in s and np.linalg.norm(np.array(s["embedding"])) > 1e-8:
+                clip_text_embeddings.append(np.array(s["embedding"]))
+            
+            # Collect visual embeddings if available
+            if "visual_embedding" in s and np.linalg.norm(np.array(s["visual_embedding"])) > 1e-8:
+                clip_visual_embeddings.append(np.array(s["visual_embedding"]))
+        
+        # Create query embeddings (weighted average for better representation)
+        text_query_embedding = None
+        visual_query_embedding = None
+        
+        if clip_text_embeddings:
+            # Use weighted average (longer segments have more weight)
+            text_query_embedding = np.mean(clip_text_embeddings, axis=0)
+            text_query_embedding = text_query_embedding / (np.linalg.norm(text_query_embedding) + 1e-8)
+        
+        if clip_visual_embeddings:
+            visual_query_embedding = np.mean(clip_visual_embeddings, axis=0)
+            visual_query_embedding = visual_query_embedding / (np.linalg.norm(visual_query_embedding) + 1e-8)
         
         # Remove query clip from index first
         self.video_index = [v for v in self.video_index if v["video_id"] != "query_clip"]
         
-        # Search across corpus with similarity threshold filtering
+        # Search across corpus with enhanced multi-modal matching
         min_similarity = self.similarity_threshold
         results = []
+        
         for video_data in self.video_index:
             for segment in video_data["segments"]:
-                segment_embedding = np.array(segment["embedding"])
+                similarities = []
                 
-                # Normalize segment embedding
-                segment_embedding = segment_embedding / (np.linalg.norm(segment_embedding) + 1e-8)
+                # Text-based similarity (if available)
+                if text_query_embedding is not None and "embedding" in segment:
+                    segment_embedding = np.array(segment["embedding"])
+                    if np.linalg.norm(segment_embedding) > 1e-8:
+                        segment_embedding = segment_embedding / (np.linalg.norm(segment_embedding) + 1e-8)
+                        text_sim = np.dot(text_query_embedding, segment_embedding)
+                        if text_sim >= min_similarity:
+                            similarities.append(('text', text_sim))
                 
-                # Calculate cosine similarity
-                similarity = np.dot(query_embedding, segment_embedding)
+                # Visual-based similarity (if available)
+                if visual_query_embedding is not None and "visual_embedding" in segment:
+                    segment_visual = np.array(segment["visual_embedding"])
+                    if np.linalg.norm(segment_visual) > 1e-8:
+                        segment_visual = segment_visual / (np.linalg.norm(segment_visual) + 1e-8)
+                        visual_sim = np.dot(visual_query_embedding, segment_visual)
+                        # Use stricter visual threshold for visual similarity
+                        visual_min_threshold = max(0.50, self.visual_similarity_threshold - 0.15)
+                        if visual_sim >= visual_min_threshold:
+                            similarities.append(('visual', visual_sim))
                 
-                # Filter by similarity threshold to remove irrelevant results
-                if similarity < min_similarity:
+                if not similarities:
+                    continue
+                
+                # Use the best similarity score (or weighted combination)
+                if len(similarities) == 2:
+                    # Multi-modal: combine text and visual (weighted: 60% text, 40% visual)
+                    text_sim = next((s for t, s in similarities if t == 'text'), 0)
+                    visual_sim = next((s for t, s in similarities if t == 'visual'), 0)
+                    combined_sim = 0.6 * text_sim + 0.4 * visual_sim
+                    final_similarity = combined_sim
+                    # For multi-modal, require both modalities to be reasonably high
+                    if text_sim < min_similarity * 0.8 or visual_sim < (self.visual_similarity_threshold - 0.15) * 0.8:
+                        continue
+                else:
+                    # Single modality - use stricter threshold
+                    final_similarity = max(s for _, s in similarities)
+                    # For single modality, require higher threshold
+                    if 'text' in [t for t, _ in similarities]:
+                        if final_similarity < min_similarity + 0.05:
+                            continue
+                    elif 'visual' in [t for t, _ in similarities]:
+                        if final_similarity < max(0.60, self.visual_similarity_threshold - 0.10):
+                            continue
+                
+                # Enhanced threshold: require higher similarity for video clip search
+                enhanced_threshold = min_similarity + 0.15  # Increased from 0.10 for better accuracy
+                if final_similarity < enhanced_threshold:
                     continue
                 
                 results.append({
                     "video_id": video_data["video_id"],
                     "video_path": video_data["video_path"],
                     "segment": segment,
-                    "similarity": float(similarity),
+                    "similarity": float(final_similarity),
                     "start": segment["start"],
                     "end": segment["end"]
                 })
@@ -583,9 +723,7 @@ class VideoSearchAgent:
             print(f"  ✗ Error processing image: {e}")
             return []
         
-        # Search using visual similarity
-        # Note: Only use visual embeddings (512-dim), not text embeddings (1536-dim)
-        # They're in different embedding spaces and can't be compared
+        # Enhanced image search with better filtering and quality checks
         min_similarity = self.visual_similarity_threshold
         results = []
         
@@ -593,24 +731,22 @@ class VideoSearchAgent:
             for segment in video_data["segments"]:
                 # Only use visual embedding for image search (same embedding space)
                 if "visual_embedding" not in segment:
-                    # Skip segments without visual embeddings (can't compare with image query)
                     continue
                 
                 segment_embedding = np.array(segment["visual_embedding"])
                 
-                # Normalize segment embedding (ensure both query and segment are normalized)
+                # Normalize segment embedding
                 segment_norm = np.linalg.norm(segment_embedding)
                 if segment_norm < 1e-8:
-                    # Skip invalid embeddings (zero vectors)
                     continue
                 segment_embedding = segment_embedding / segment_norm
                 
                 # Calculate cosine similarity (both are normalized 512-dim CLIP embeddings)
                 similarity = np.dot(query_embedding, segment_embedding)
                 
-                # Apply stricter filtering: only include results above threshold
-                # CLIP cosine similarity ranges from -1 to 1, but typically positive for similar images
-                if similarity < min_similarity:
+                # Enhanced threshold: stricter for image search to avoid irrelevant results
+                enhanced_threshold = max(0.60, min_similarity - 0.05)  # Increased from 0.40 for better relevance
+                if similarity < enhanced_threshold:
                     continue
                 
                 results.append({
@@ -627,39 +763,170 @@ class VideoSearchAgent:
         
         if not results:
             print(f"  ⚠ No results found above visual similarity threshold {min_similarity:.2f}")
-            print(f"     Try: Lowering threshold or using a more similar image")
             return []
         
-        # Strict quality filter: CLIP similarities for truly similar images are typically 0.70-0.90+
-        # Scores below 0.70 are often false positives for unrelated images
-        MIN_QUALITY_SIMILARITY = 0.70  # Absolute minimum for a truly relevant match
-        
-        if not results:
-            print(f"  ⚠ No results found above visual similarity threshold {min_similarity:.2f}")
-            return []
-        
+        # Enhanced quality filtering: Stricter thresholds for better relevance
         best_similarity = results[0]["similarity"]
         
-        # Quality check 1: Top result must meet absolute quality threshold
+        # Quality check 1: Top result must meet minimum quality (increased for better relevance)
+        MIN_QUALITY_SIMILARITY = 0.45  # Increased from 0.30
         if best_similarity < MIN_QUALITY_SIMILARITY:
             print(f"  ⚠ Best match similarity ({best_similarity:.3f}) is below quality threshold ({MIN_QUALITY_SIMILARITY:.2f})")
-            print(f"     For truly similar images, CLIP typically scores 0.70-0.90+")
-            print(f"     This image likely doesn't match any video content.")
             return []
         
-        # Quality check 2: Top result must be significantly above the threshold
-        quality_gap = 0.08  # Require at least 0.08 above threshold
-        if best_similarity < min_similarity + quality_gap:
-            print(f"  ⚠ Best match similarity ({best_similarity:.3f}) is too close to threshold ({min_similarity:.2f})")
-            print(f"     Required minimum: {min_similarity + quality_gap:.2f}")
-            print(f"     This image likely doesn't match any video content.")
-            return []
+        # Quality check 2: Check if there's a clear winner (top result significantly better)
+        if len(results) > 1:
+            second_best = results[1]["similarity"]
+            gap = best_similarity - second_best
+            if gap > 0.08:  # Increased from 0.05
+                print(f"  ✓ Strong match found (gap: {gap:.3f} above second best)")
         
-        print(f"  ✓ Found {len(results)} visually similar segment(s) (threshold: {min_similarity:.2f})")
-        print(f"     Best match similarity: {best_similarity:.3f} (quality threshold: {MIN_QUALITY_SIMILARITY:.2f})")
+        # Filter: Keep only results reasonably close to the best match (removes outliers)
+        # Stricter cutoff for better relevance
+        if len(results) > top_k:
+            similarity_cutoff = best_similarity - 0.10  # Reduced from 0.15 for stricter filtering
+            results = [r for r in results if r["similarity"] >= similarity_cutoff]
+        
+        print(f"  ✓ Found {len(results)} visually similar segment(s) (best: {best_similarity:.3f})")
         
         # Return top_k results
         return results[:top_k]
+    
+    def _get_clip_text_embedding(self, text: str) -> np.ndarray:
+        """Convert text to visual embedding using CLIP's text encoder."""
+        if not self.has_clip or self.clip_model is None:
+            return None
+        
+        try:
+            # CLIP can encode text into the same visual embedding space
+            inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True, truncation=True)
+            
+            with torch.no_grad():
+                text_features = self.clip_model.get_text_features(**inputs)
+            
+            embedding = text_features[0].cpu().numpy()
+            
+            # Normalize embedding
+            norm = np.linalg.norm(embedding)
+            if norm > 1e-8:
+                embedding = embedding / norm
+            else:
+                return None
+            
+            return embedding
+        except Exception as e:
+            print(f"    ⚠ CLIP text encoding failed: {e}")
+            return None
+    
+    def _search_with_visual_embedding(self, query_embedding: np.ndarray, top_k: int = 5, 
+                                     min_similarity: float = None, mute_videos_only: bool = False) -> List[Dict]:
+        """Search using visual embeddings (for mute videos or image queries)."""
+        if min_similarity is None:
+            min_similarity = self.visual_similarity_threshold
+        
+        results = []
+        query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-8)
+        
+        mute_video_count = 0
+        segment_count = 0
+        similarity_scores = []
+        
+        for video_data in self.video_index:
+            # If mute_videos_only is True, skip videos with audio
+            if mute_videos_only and video_data.get('has_audio', True):
+                continue
+            
+            mute_video_count += 1
+            
+            for segment in video_data["segments"]:
+                # Only use visual embedding for visual search
+                if "visual_embedding" not in segment:
+                    continue
+                
+                # Skip segments with no content
+                if not segment.get("has_content", True):
+                    continue
+                
+                segment_count += 1
+                segment_embedding = np.array(segment["visual_embedding"])
+                
+                # Normalize segment embedding
+                segment_norm = np.linalg.norm(segment_embedding)
+                if segment_norm < 1e-8:
+                    continue
+                segment_embedding = segment_embedding / segment_norm
+                
+                # Calculate cosine similarity
+                similarity = np.dot(query_norm, segment_embedding)
+                similarity_scores.append(similarity)
+                
+                # Enhanced filtering: require higher similarity for better relevance
+                # Add a small buffer to ensure only truly relevant results
+                enhanced_threshold = min_similarity + 0.05
+                if similarity < enhanced_threshold:
+                    continue
+                
+                results.append({
+                    "video_id": video_data["video_id"],
+                    "video_path": video_data["video_path"],
+                    "segment": segment,
+                    "similarity": float(similarity),
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "search_type": "visual"  # Mark as visual search result
+                })
+        
+        # Debug output
+        if mute_videos_only:
+            print(f"    [Debug] Searched {mute_video_count} mute video(s), {segment_count} segment(s) with visual embeddings")
+            if similarity_scores:
+                max_sim = max(similarity_scores)
+                min_sim = min(similarity_scores)
+                avg_sim = sum(similarity_scores) / len(similarity_scores)
+                print(f"    [Debug] Similarity range: {min_sim:.3f} - {max_sim:.3f} (avg: {avg_sim:.3f}, threshold: {min_similarity:.3f})")
+        
+        # Sort by similarity
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+    
+    def _merge_search_results(self, text_results: List[Dict], visual_results: List[Dict], top_k: int) -> List[Dict]:
+        """Merge text and visual search results, deduplicating and ranking."""
+        # Create a map to track best similarity for each segment
+        result_map = {}
+        
+        # Increased minimum quality threshold - filter out low-quality results
+        # Results below 0.35 are likely not relevant (increased from 0.25)
+        MIN_QUALITY_THRESHOLD = 0.35
+        
+        # Add text results (already filtered by threshold in _search_with_embedding)
+        for result in text_results:
+            # Apply additional quality filter
+            if result['similarity'] < MIN_QUALITY_THRESHOLD:
+                continue
+            key = (result['video_id'], result['start'], result['end'])
+            if key not in result_map or result['similarity'] > result_map[key]['similarity']:
+                result_map[key] = result
+        
+        # Add visual results (may overlap with text results)
+        for result in visual_results:
+            # Apply additional quality filter
+            if result['similarity'] < MIN_QUALITY_THRESHOLD:
+                continue
+            key = (result['video_id'], result['start'], result['end'])
+            # Keep the higher similarity score
+            if key not in result_map or result['similarity'] > result_map[key]['similarity']:
+                result_map[key] = result
+        
+        # Convert back to list and sort
+        merged_results = list(result_map.values())
+        merged_results.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        # Final quality check: if top result is below threshold, return empty
+        if merged_results and merged_results[0]['similarity'] < MIN_QUALITY_THRESHOLD:
+            print(f"  ⚠ Top result similarity ({merged_results[0]['similarity']:.3f}) below quality threshold ({MIN_QUALITY_THRESHOLD:.2f}), returning no results")
+            return []
+        
+        return merged_results[:top_k]
     
     def _search_with_embedding(self, query_embedding: np.ndarray, top_k: int = 5, min_similarity: float = None) -> List[Dict]:
         """Helper method to search with a query embedding."""
@@ -678,6 +945,10 @@ class VideoSearchAgent:
                 # Skip if no embedding field
                 if "embedding" not in segment:
                     continue
+                
+                # Skip segments with no content (no text, no visual)
+                if not segment.get("has_content", True):
+                    continue
                     
                 segment_embedding = np.array(segment["embedding"])
                 
@@ -691,13 +962,22 @@ class VideoSearchAgent:
                 if np.linalg.norm(segment_embedding) < 1e-8:
                     continue
                 
+                # Additional check: skip if segment has no text content at all
+                segment_text = segment.get("text", "").strip()
+                segment_ocr = segment.get("on_screen_text", "").strip()
+                if not segment_text and not segment_ocr:
+                    # No text content - skip in text-based search
+                    continue
+                
                 segment_norm = segment_embedding / (np.linalg.norm(segment_embedding) + 1e-8)
                 
                 # Calculate cosine similarity
                 similarity = np.dot(query_norm, segment_norm)
                 
-                # Filter by minimum similarity threshold
-                if similarity < min_similarity:
+                # Enhanced filtering: require higher similarity for better relevance
+                # Add a small buffer to ensure only truly relevant results
+                enhanced_threshold = min_similarity + 0.05
+                if similarity < enhanced_threshold:
                     continue
                 
                 results.append({

@@ -3,97 +3,181 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Video Search Agent</title>
+    <title>AI Video Search Agent - Enterprise Solution</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-content">
+            <div class="spinner-large"></div>
+            <p class="loading-text">Processing your request...</p>
+            <div class="progress-bar-container">
+                <div id="progressBar" class="progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
-        <header>
-            <h1>🎬 AI-Powered Video Search Agent</h1>
-            <p class="subtitle">Context-Anchored Video Search with Multimodal Retrieval</p>
+        <header class="main-header">
+            <div class="header-content">
+                <div class="logo-section">
+                    <div class="logo-icon">
+                        <i class="fas fa-video"></i>
+                    </div>
+                    <div class="title-section">
+                        <h1>AI-Powered Video Search</h1>
+                        <p class="subtitle">Enterprise-Grade Multimodal Retrieval System</p>
+                    </div>
+                </div>
+                <div class="header-stats" id="headerStats">
+                    <div class="stat-item">
+                        <i class="fas fa-database"></i>
+                        <span id="videoCount">0</span> Videos
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-film"></i>
+                        <span id="segmentCount">0</span> Segments
+                    </div>
+                </div>
+            </div>
         </header>
 
         <div class="status-bar" id="statusBar">
-            <span id="statusText">Initializing...</span>
+            <div class="status-content">
+                <i class="fas fa-circle-notch fa-spin status-icon"></i>
+                <span id="statusText">Initializing system...</span>
+            </div>
         </div>
 
-        <div class="tabs">
-            <button class="tab-btn active" onclick="showTab('index', this)">Index Videos</button>
-            <button class="tab-btn" onclick="showTab('search', this)">Text Search</button>
-            <button class="tab-btn" onclick="showTab('clip-search', this)">Clip Search</button>
-            <button class="tab-btn" onclick="showTab('audio-search', this)">Audio Search</button>
-            <button class="tab-btn" onclick="showTab('image-search', this)">Image Search</button>
+        <div class="tabs-container">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="showTab('index', this)">
+                    <i class="fas fa-upload"></i>
+                    <span>Index Videos</span>
+                </button>
+                <button class="tab-btn" onclick="showTab('rag', this)">
+                    <i class="fas fa-comments"></i>
+                    <span>Text Query</span>
+                </button>
+                <button class="tab-btn" onclick="showTab('clip-search', this)">
+                    <i class="fas fa-video"></i>
+                    <span>Clip Search</span>
+                </button>
+                <button class="tab-btn" onclick="showTab('audio-search', this)">
+                    <i class="fas fa-music"></i>
+                    <span>Audio Search</span>
+                </button>
+                <button class="tab-btn" onclick="showTab('image-search', this)">
+                    <i class="fas fa-image"></i>
+                    <span>Image Search</span>
+                </button>
+            </div>
         </div>
 
         <!-- Index Tab -->
         <div id="indexTab" class="tab-content active">
             <div class="card">
-                <h2>📁 Index Video Corpus</h2>
-                <p>Upload video files to build a searchable index</p>
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-database"></i>
+                    </div>
+                    <div>
+                        <h2>Index Video Corpus</h2>
+                        <p>Upload video files to build a searchable index</p>
+                    </div>
+                </div>
                 
                 <form id="indexForm" enctype="multipart/form-data">
                     <div class="form-group">
-                        <label for="videos">Select Video Files:</label>
-                        <input type="file" id="videos" name="videos" multiple accept="video/*" required>
-                        <small>Supported: MP4, MOV, AVI, MKV (Max 500MB each)</small>
+                        <label for="videos">
+                            <i class="fas fa-file-video"></i>
+                            Select Video Files
+                        </label>
+                        <div class="file-upload-area" id="videoUploadArea">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drag & drop video files here or <span class="file-browse">browse</span></p>
+                                <small>Supported: MP4, MOV, AVI, MKV (Max 500MB each)</small>
+                            </div>
+                            <input type="file" id="videos" name="videos" multiple accept="video/*" required>
+                            <div class="file-list" id="videoFileList"></div>
+                        </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="indexName">Index Name:</label>
-                        <input type="text" id="indexName" name="index_name" value="default_index.json" placeholder="default_index.json">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="indexName">
+                                <i class="fas fa-tag"></i>
+                                Index Name
+                            </label>
+                            <input type="text" id="indexName" name="index_name" value="default_index.json" placeholder="default_index.json">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="modelSize">
+                                <i class="fas fa-cog"></i>
+                                Whisper Model
+                            </label>
+                            <select id="modelSize" name="model_size">
+                                <option value="base" selected>Base (Recommended)</option>
+                                <option value="tiny">Tiny (Fastest)</option>
+                                <option value="small">Small</option>
+                                <option value="medium">Medium</option>
+                                <option value="large">Large (Best Quality)</option>
+                            </select>
+                        </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="modelSize">Whisper Model:</label>
-                        <select id="modelSize" name="model_size">
-                            <option value="base" selected>Base (Recommended)</option>
-                            <option value="tiny">Tiny (Fastest)</option>
-                            <option value="small">Small</option>
-                            <option value="medium">Medium</option>
-                            <option value="large">Large (Best Quality)</option>
-                        </select>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary" id="indexBtn">
-                        <span id="indexBtnText">Index Videos</span>
+                    <button type="submit" class="btn btn-primary btn-large" id="indexBtn">
+                        <span id="indexBtnText">
+                            <i class="fas fa-play"></i>
+                            Index Videos
+                        </span>
                         <span class="spinner" id="indexSpinner" style="display:none;"></span>
                     </button>
                 </form>
                 
+                <!-- Indexing Progress -->
+                <div id="indexingProgress" class="indexing-progress" style="display:none;">
+                    <div class="progress-header">
+                        <h3>
+                            <i class="fas fa-cog fa-spin"></i>
+                            Indexing Videos...
+                        </h3>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div id="indexingProgressBar" class="progress-bar-fill"></div>
+                    </div>
+                    <div class="progress-details">
+                        <span id="progressText">Preparing...</span>
+                    </div>
+                </div>
+                
                 <div id="indexResult" class="result-box" style="display:none;"></div>
-            </div>
-        </div>
-
-        <!-- Search Tab -->
-        <div id="searchTab" class="tab-content">
-            <div class="card">
-                <h2>🔍 Text Query Search</h2>
-                <p>Search for relevant segments using natural language</p>
                 
-                <form id="searchForm">
-                    <div class="form-group">
-                        <label for="query">Search Query:</label>
-                        <input type="text" id="query" name="query" placeholder="e.g., Spring Framework, dependency injection" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="topK">Number of Results:</label>
-                        <input type="number" id="topK" name="top_k" value="5" min="1" max="20">
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary" id="searchBtn">
-                        <span id="searchBtnText">Search</span>
-                        <span class="spinner" id="searchSpinner" style="display:none;"></span>
-                    </button>
-                </form>
-                
-                <div id="searchResults" class="results-container" style="display:none;">
-                    <h3>Search Results</h3>
-                    <div id="resultsList"></div>
-                    <div class="actions">
-                        <button class="btn btn-success" id="generateHighlightBtn" style="display:none;">
-                            Generate Highlight Reel
+                <!-- Videos List Section -->
+                <div class="videos-list-section">
+                    <div class="section-header">
+                        <h3>
+                            <i class="fas fa-list"></i>
+                            Indexed Videos
+                        </h3>
+                        <button class="btn btn-secondary" id="refreshVideosBtn" onclick="loadVideosList()">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
                         </button>
+                    </div>
+                    <div id="videosList" class="videos-grid">
+                        <div class="loading-placeholder">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            Loading videos...
+                        </div>
                     </div>
                 </div>
             </div>
@@ -102,32 +186,70 @@
         <!-- Clip Search Tab -->
         <div id="clip-searchTab" class="tab-content">
             <div class="card">
-                <h2>🎥 Video Clip Search</h2>
-                <p>Upload a sample video clip to find similar segments</p>
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-video"></i>
+                    </div>
+                    <div>
+                        <h2>Video Clip Search</h2>
+                        <p>Upload a sample video clip to find similar segments</p>
+                    </div>
+                </div>
                 
                 <form id="clipSearchForm" enctype="multipart/form-data">
                     <div class="form-group">
-                        <label for="clip">Upload Query Clip:</label>
-                        <input type="file" id="clip" name="clip" accept="video/*" required>
-                        <small>Upload a short video clip to find similar segments</small>
+                        <label for="clip">
+                            <i class="fas fa-file-video"></i>
+                            Upload Query Clip
+                        </label>
+                        <div class="file-upload-area" id="clipUploadArea">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drag & drop a video clip here or <span class="file-browse">browse</span></p>
+                                <small>Upload a short video clip to find similar segments</small>
+                            </div>
+                            <input type="file" id="clip" name="clip" accept="video/*" required>
+                            <div class="file-preview" id="clipPreview"></div>
+                        </div>
                     </div>
                     
                     <div class="form-group">
-                        <label for="clipTopK">Number of Results:</label>
+                        <label for="clipTopK">
+                            <i class="fas fa-list-ol"></i>
+                            Number of Results
+                        </label>
                         <input type="number" id="clipTopK" name="top_k" value="5" min="1" max="20">
                     </div>
                     
-                    <button type="submit" class="btn btn-primary" id="clipSearchBtn">
-                        <span id="clipSearchBtnText">Search with Clip</span>
+                    <button type="submit" class="btn btn-primary btn-large" id="clipSearchBtn">
+                        <span id="clipSearchBtnText">
+                            <i class="fas fa-search"></i>
+                            Search with Clip
+                        </span>
                         <span class="spinner" id="clipSearchSpinner" style="display:none;"></span>
                     </button>
                 </form>
                 
                 <div id="clipSearchResults" class="results-container" style="display:none;">
-                    <h3>Similar Segments</h3>
-                    <div id="clipResultsList"></div>
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-lightbulb"></i>
+                            AI-Generated Answer
+                        </h3>
+                    </div>
+                    <div id="clipAnswer" class="rag-answer-box"></div>
+                    
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-list"></i>
+                            Similar Segments
+                            <span class="results-count" id="clipResultsCount"></span>
+                        </h3>
+                    </div>
+                    <div id="clipResultsList" class="results-grid"></div>
                     <div class="actions">
-                        <button class="btn btn-success" id="generateClipHighlightBtn" style="display:none;">
+                        <button class="btn btn-success btn-large" id="generateClipHighlightBtn" style="display:none;">
+                            <i class="fas fa-film"></i>
                             Generate Highlight Reel
                         </button>
                     </div>
@@ -138,32 +260,169 @@
         <!-- Audio Search Tab -->
         <div id="audio-searchTab" class="tab-content">
             <div class="card">
-                <h2>🎵 Audio Query Search</h2>
-                <p>Upload an audio file to find similar segments</p>
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-music"></i>
+                    </div>
+                    <div>
+                        <h2>Audio Query Search</h2>
+                        <p>Upload an audio file to find similar segments</p>
+                    </div>
+                </div>
                 
                 <form id="audioSearchForm" enctype="multipart/form-data">
                     <div class="form-group">
-                        <label for="audio">Upload Audio File:</label>
-                        <input type="file" id="audio" name="audio" accept="audio/*" required>
-                        <small>Supported: MP3, WAV, M4A, AAC, OGG, FLAC</small>
+                        <label for="audio">
+                            <i class="fas fa-file-audio"></i>
+                            Upload Audio File
+                        </label>
+                        <div class="file-upload-area" id="audioUploadArea">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drag & drop an audio file here or <span class="file-browse">browse</span></p>
+                                <small>Supported: MP3, WAV, M4A, AAC, OGG, FLAC</small>
+                            </div>
+                            <input type="file" id="audio" name="audio" accept="audio/*" required>
+                            <div class="file-preview" id="audioPreview"></div>
+                        </div>
                     </div>
                     
                     <div class="form-group">
-                        <label for="audioTopK">Number of Results:</label>
+                        <label for="audioTopK">
+                            <i class="fas fa-list-ol"></i>
+                            Number of Results
+                        </label>
                         <input type="number" id="audioTopK" name="top_k" value="5" min="1" max="20">
                     </div>
                     
-                    <button type="submit" class="btn btn-primary" id="audioSearchBtn">
-                        <span id="audioSearchBtnText">Search with Audio</span>
+                    <button type="submit" class="btn btn-primary btn-large" id="audioSearchBtn">
+                        <span id="audioSearchBtnText">
+                            <i class="fas fa-search"></i>
+                            Search with Audio
+                        </span>
                         <span class="spinner" id="audioSearchSpinner" style="display:none;"></span>
                     </button>
                 </form>
                 
                 <div id="audioSearchResults" class="results-container" style="display:none;">
-                    <h3>Search Results</h3>
-                    <div id="audioResultsList"></div>
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-lightbulb"></i>
+                            AI-Generated Answer
+                        </h3>
+                    </div>
+                    <div id="audioAnswer" class="rag-answer-box"></div>
+                    
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-list"></i>
+                            Search Results
+                            <span class="results-count" id="audioResultsCount"></span>
+                        </h3>
+                    </div>
+                    <div id="audioResultsList" class="results-grid"></div>
                     <div class="actions">
-                        <button class="btn btn-success" id="generateAudioHighlightBtn" style="display:none;">
+                        <button class="btn btn-success btn-large" id="generateAudioHighlightBtn" style="display:none;">
+                            <i class="fas fa-film"></i>
+                            Generate Highlight Reel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RAG Query Tab -->
+        <div id="ragTab" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div>
+                        <h2>RAG Query (Retrieval-Augmented Generation)</h2>
+                        <p>Ask questions and get AI-generated answers based on video content</p>
+                    </div>
+                </div>
+                
+                <form id="ragForm">
+                    <div class="form-group">
+                        <label for="ragQuestion">
+                            <i class="fas fa-question-circle"></i>
+                            Your Question
+                        </label>
+                        <textarea id="ragQuestion" name="question" rows="4" placeholder="e.g., What is dependency injection? How does Spring Framework work?" required></textarea>
+                        <small>Ask any question about the indexed video content</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ragTopK">
+                                <i class="fas fa-list-ol"></i>
+                                Number of Segments
+                            </label>
+                            <input type="number" id="ragTopK" name="top_k" value="5" min="1" max="20">
+                            <small>More segments = more context</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="ragModel">
+                                <i class="fas fa-brain"></i>
+                                LLM Model
+                            </label>
+                            <select id="ragModel" name="model">
+                                <option value="gpt-3.5-turbo" selected>GPT-3.5 Turbo (Fast & Cost-effective)</option>
+                                <option value="gpt-4">GPT-4 (Better Quality)</option>
+                                <option value="gpt-4-turbo-preview">GPT-4 Turbo (Latest)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ragUseOpenAI" name="use_openai" checked>
+                            <span>Use OpenAI for answer generation (requires API key)</span>
+                        </label>
+                        <small>If unchecked, uses template-based responses</small>
+                    </div>
+                    
+                    <div class="form-group" id="ragApiKeyGroup" style="display:none;">
+                        <label for="ragApiKey">
+                            <i class="fas fa-key"></i>
+                            OpenAI API Key (optional)
+                        </label>
+                        <input type="password" id="ragApiKey" name="openai_api_key" placeholder="Leave empty to use environment variable">
+                        <small>If not provided, will use OPENAI_API_KEY from environment</small>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary btn-large" id="ragBtn">
+                        <span id="ragBtnText">
+                            <i class="fas fa-paper-plane"></i>
+                            Ask Question
+                        </span>
+                        <span class="spinner" id="ragSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="ragResults" class="results-container" style="display:none;">
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-lightbulb"></i>
+                            AI-Generated Answer
+                        </h3>
+                    </div>
+                    <div id="ragAnswer" class="rag-answer-box"></div>
+                    
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-list"></i>
+                            Source Segments
+                            <span class="results-count" id="ragResultsCount"></span>
+                        </h3>
+                    </div>
+                    <div id="ragSourcesList" class="results-grid"></div>
+                    <div class="actions">
+                        <button class="btn btn-success btn-large" id="generateRAGHighlightBtn" style="display:none;">
+                            <i class="fas fa-film"></i>
                             Generate Highlight Reel
                         </button>
                     </div>
@@ -174,32 +433,70 @@
         <!-- Image Search Tab -->
         <div id="image-searchTab" class="tab-content">
             <div class="card">
-                <h2>🖼️ Image Query Search</h2>
-                <p>Upload an image to find visually similar segments</p>
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-image"></i>
+                    </div>
+                    <div>
+                        <h2>Image Query Search</h2>
+                        <p>Upload an image to find visually similar segments</p>
+                    </div>
+                </div>
                 
                 <form id="imageSearchForm" enctype="multipart/form-data">
                     <div class="form-group">
-                        <label for="image">Upload Image File:</label>
-                        <input type="file" id="image" name="image" accept="image/*" required>
-                        <small>Supported: JPG, PNG, GIF, BMP, WEBP</small>
+                        <label for="image">
+                            <i class="fas fa-file-image"></i>
+                            Upload Image File
+                        </label>
+                        <div class="file-upload-area" id="imageUploadArea">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drag & drop an image here or <span class="file-browse">browse</span></p>
+                                <small>Supported: JPG, PNG, GIF, BMP, WEBP</small>
+                            </div>
+                            <input type="file" id="image" name="image" accept="image/*" required>
+                            <div class="file-preview" id="imagePreview"></div>
+                        </div>
                     </div>
                     
                     <div class="form-group">
-                        <label for="imageTopK">Number of Results:</label>
+                        <label for="imageTopK">
+                            <i class="fas fa-list-ol"></i>
+                            Number of Results
+                        </label>
                         <input type="number" id="imageTopK" name="top_k" value="5" min="1" max="20">
                     </div>
                     
-                    <button type="submit" class="btn btn-primary" id="imageSearchBtn">
-                        <span id="imageSearchBtnText">Search with Image</span>
+                    <button type="submit" class="btn btn-primary btn-large" id="imageSearchBtn">
+                        <span id="imageSearchBtnText">
+                            <i class="fas fa-search"></i>
+                            Search with Image
+                        </span>
                         <span class="spinner" id="imageSearchSpinner" style="display:none;"></span>
                     </button>
                 </form>
                 
                 <div id="imageSearchResults" class="results-container" style="display:none;">
-                    <h3>Search Results</h3>
-                    <div id="imageResultsList"></div>
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-lightbulb"></i>
+                            AI-Generated Answer
+                        </h3>
+                    </div>
+                    <div id="imageAnswer" class="rag-answer-box"></div>
+                    
+                    <div class="results-header">
+                        <h3>
+                            <i class="fas fa-list"></i>
+                            Search Results
+                            <span class="results-count" id="imageResultsCount"></span>
+                        </h3>
+                    </div>
+                    <div id="imageResultsList" class="results-grid"></div>
                     <div class="actions">
-                        <button class="btn btn-success" id="generateImageHighlightBtn" style="display:none;">
+                        <button class="btn btn-success btn-large" id="generateImageHighlightBtn" style="display:none;">
+                            <i class="fas fa-film"></i>
                             Generate Highlight Reel
                         </button>
                     </div>
@@ -208,12 +505,24 @@
         </div>
 
         <!-- Highlight Reel Section -->
-        <div id="highlightSection" class="card" style="display:none;">
-            <h2>🎬 Highlight Reel</h2>
-            <div id="highlightPlayer"></div>
-            <div id="highlightStatus"></div>
+        <div id="highlightSection" class="card highlight-section" style="display:none;">
+            <div class="card-header">
+                <div class="card-icon">
+                    <i class="fas fa-film"></i>
+                </div>
+                <div>
+                    <h2>Highlight Reel</h2>
+                    <p>Your generated highlight compilation</p>
+                </div>
+            </div>
+            <div id="highlightPlayer" class="highlight-player"></div>
+            <div id="highlightStatus" class="highlight-status"></div>
         </div>
     </div>
+
+    <footer class="main-footer">
+        <p>&copy; 2024 AI Video Search Agent. Enterprise-Grade Multimodal Retrieval System.</p>
+    </footer>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
