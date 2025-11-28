@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Search Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 AI-Powered Video Search Agent</h1>
+            <p class="subtitle">Context-Anchored Video Search with Multimodal Retrieval</p>
+        </header>
+
+        <div class="status-bar" id="statusBar">
+            <span id="statusText">Initializing...</span>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="showTab('index', this)">Index Videos</button>
+            <button class="tab-btn" onclick="showTab('search', this)">Text Search</button>
+            <button class="tab-btn" onclick="showTab('clip-search', this)">Clip Search</button>
+            <button class="tab-btn" onclick="showTab('audio-search', this)">Audio Search</button>
+            <button class="tab-btn" onclick="showTab('image-search', this)">Image Search</button>
+        </div>
+
+        <!-- Index Tab -->
+        <div id="indexTab" class="tab-content active">
+            <div class="card">
+                <h2>📁 Index Video Corpus</h2>
+                <p>Upload video files to build a searchable index</p>
+                
+                <form id="indexForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="videos">Select Video Files:</label>
+                        <input type="file" id="videos" name="videos" multiple accept="video/*" required>
+                        <small>Supported: MP4, MOV, AVI, MKV (Max 500MB each)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="indexName">Index Name:</label>
+                        <input type="text" id="indexName" name="index_name" value="default_index.json" placeholder="default_index.json">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="modelSize">Whisper Model:</label>
+                        <select id="modelSize" name="model_size">
+                            <option value="base" selected>Base (Recommended)</option>
+                            <option value="tiny">Tiny (Fastest)</option>
+                            <option value="small">Small</option>
+                            <option value="medium">Medium</option>
+                            <option value="large">Large (Best Quality)</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="indexBtn">
+                        <span id="indexBtnText">Index Videos</span>
+                        <span class="spinner" id="indexSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="indexResult" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+
+        <!-- Search Tab -->
+        <div id="searchTab" class="tab-content">
+            <div class="card">
+                <h2>🔍 Text Query Search</h2>
+                <p>Search for relevant segments using natural language</p>
+                
+                <form id="searchForm">
+                    <div class="form-group">
+                        <label for="query">Search Query:</label>
+                        <input type="text" id="query" name="query" placeholder="e.g., Spring Framework, dependency injection" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="topK">Number of Results:</label>
+                        <input type="number" id="topK" name="top_k" value="5" min="1" max="20">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="searchBtn">
+                        <span id="searchBtnText">Search</span>
+                        <span class="spinner" id="searchSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="searchResults" class="results-container" style="display:none;">
+                    <h3>Search Results</h3>
+                    <div id="resultsList"></div>
+                    <div class="actions">
+                        <button class="btn btn-success" id="generateHighlightBtn" style="display:none;">
+                            Generate Highlight Reel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clip Search Tab -->
+        <div id="clip-searchTab" class="tab-content">
+            <div class="card">
+                <h2>🎥 Video Clip Search</h2>
+                <p>Upload a sample video clip to find similar segments</p>
+                
+                <form id="clipSearchForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="clip">Upload Query Clip:</label>
+                        <input type="file" id="clip" name="clip" accept="video/*" required>
+                        <small>Upload a short video clip to find similar segments</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="clipTopK">Number of Results:</label>
+                        <input type="number" id="clipTopK" name="top_k" value="5" min="1" max="20">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="clipSearchBtn">
+                        <span id="clipSearchBtnText">Search with Clip</span>
+                        <span class="spinner" id="clipSearchSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="clipSearchResults" class="results-container" style="display:none;">
+                    <h3>Similar Segments</h3>
+                    <div id="clipResultsList"></div>
+                    <div class="actions">
+                        <button class="btn btn-success" id="generateClipHighlightBtn" style="display:none;">
+                            Generate Highlight Reel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio Search Tab -->
+        <div id="audio-searchTab" class="tab-content">
+            <div class="card">
+                <h2>🎵 Audio Query Search</h2>
+                <p>Upload an audio file to find similar segments</p>
+                
+                <form id="audioSearchForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="audio">Upload Audio File:</label>
+                        <input type="file" id="audio" name="audio" accept="audio/*" required>
+                        <small>Supported: MP3, WAV, M4A, AAC, OGG, FLAC</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="audioTopK">Number of Results:</label>
+                        <input type="number" id="audioTopK" name="top_k" value="5" min="1" max="20">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="audioSearchBtn">
+                        <span id="audioSearchBtnText">Search with Audio</span>
+                        <span class="spinner" id="audioSearchSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="audioSearchResults" class="results-container" style="display:none;">
+                    <h3>Search Results</h3>
+                    <div id="audioResultsList"></div>
+                    <div class="actions">
+                        <button class="btn btn-success" id="generateAudioHighlightBtn" style="display:none;">
+                            Generate Highlight Reel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Image Search Tab -->
+        <div id="image-searchTab" class="tab-content">
+            <div class="card">
+                <h2>🖼️ Image Query Search</h2>
+                <p>Upload an image to find visually similar segments</p>
+                
+                <form id="imageSearchForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="image">Upload Image File:</label>
+                        <input type="file" id="image" name="image" accept="image/*" required>
+                        <small>Supported: JPG, PNG, GIF, BMP, WEBP</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="imageTopK">Number of Results:</label>
+                        <input type="number" id="imageTopK" name="top_k" value="5" min="1" max="20">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="imageSearchBtn">
+                        <span id="imageSearchBtnText">Search with Image</span>
+                        <span class="spinner" id="imageSearchSpinner" style="display:none;"></span>
+                    </button>
+                </form>
+                
+                <div id="imageSearchResults" class="results-container" style="display:none;">
+                    <h3>Search Results</h3>
+                    <div id="imageResultsList"></div>
+                    <div class="actions">
+                        <button class="btn btn-success" id="generateImageHighlightBtn" style="display:none;">
+                            Generate Highlight Reel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Highlight Reel Section -->
+        <div id="highlightSection" class="card" style="display:none;">
+            <h2>🎬 Highlight Reel</h2>
+            <div id="highlightPlayer"></div>
+            <div id="highlightStatus"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
