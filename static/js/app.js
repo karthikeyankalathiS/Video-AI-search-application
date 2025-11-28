@@ -125,6 +125,9 @@ function setupDragAndDrop() {
 function setupFileUploadArea(area, input, type, multiple) {
     const fileList = area.querySelector('.file-list') || area.querySelector('.file-preview');
     
+    // Flag to prevent double-triggering
+    let isOpeningDialog = false;
+    
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         area.addEventListener(eventName, preventDefaults, false);
     });
@@ -153,7 +156,32 @@ function setupFileUploadArea(area, input, type, multiple) {
         handleFileSelection(input, files, type, multiple);
     }, false);
     
-    area.addEventListener('click', () => {
+    // Prevent input from triggering area click
+    input.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+    
+    // Handle area click - open file dialog
+    area.addEventListener('click', (e) => {
+        // Don't trigger if clicking directly on the input
+        if (e.target === input) {
+            return;
+        }
+        
+        // Prevent double-triggering
+        if (isOpeningDialog) {
+            return;
+        }
+        
+        isOpeningDialog = true;
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Reset flag after a short delay
+        setTimeout(() => {
+            isOpeningDialog = false;
+        }, 300);
+        
         input.click();
     });
     
