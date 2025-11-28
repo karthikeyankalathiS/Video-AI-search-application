@@ -84,13 +84,13 @@ class VideoSearchAgent:
         # Similarity threshold - filter results below this score
         # Lower threshold = more results (but may include irrelevant ones)
         # Higher threshold = fewer but more relevant results
-        # Increased thresholds for better relevance and accuracy
+        # Increased thresholds for better relevance and accuracy (DEMO OPTIMIZED)
         if self.use_openai_embeddings:
-            self.similarity_threshold = 0.55  # Increased from 0.45 for stricter relevance
-            self.visual_similarity_threshold = 0.75  # Increased from 0.70 for stricter image matching
+            self.similarity_threshold = 0.65  # Increased from 0.55 for much stricter relevance
+            self.visual_similarity_threshold = 0.80  # Increased from 0.75 for stricter image matching
         else:
-            self.similarity_threshold = 0.45   # Increased from 0.35 for stricter relevance
-            self.visual_similarity_threshold = 0.70  # Increased from 0.65 for stricter image matching
+            self.similarity_threshold = 0.55   # Increased from 0.45 for stricter relevance
+            self.visual_similarity_threshold = 0.75  # Increased from 0.70 for stricter image matching
         
         # Load CLIP model for visual embeddings (for mute videos and image queries)
         self.clip_model = None
@@ -486,7 +486,9 @@ class VideoSearchAgent:
         min_sim = min_similarity if min_similarity is not None else self.similarity_threshold
         
         # Search with text embeddings (for videos with audio/OCR)
-        text_results = self._search_with_embedding(text_query_embedding, top_k * 2, min_similarity=min_sim)
+        # Use stricter threshold - require higher similarity for better accuracy
+        enhanced_min_sim = min_sim + 0.08  # Add buffer for better quality
+        text_results = self._search_with_embedding(text_query_embedding, top_k * 3, min_similarity=enhanced_min_sim)
         
         # Also search mute videos using CLIP text-to-visual if available
         visual_results = []
@@ -499,8 +501,8 @@ class VideoSearchAgent:
                     print(f"  [Hybrid] Visual query embedding created (dim: {len(visual_query_embedding)})")
                     # Increased threshold for text-to-visual search for better relevance
                     # CLIP text-to-visual similarity is typically lower than image-to-image, but we still need quality
-                    # For relevant matches, we expect at least 0.30-0.35 similarity
-                    visual_threshold = 0.35  # Increased from 0.25 for better relevance
+                    # For relevant matches, we expect at least 0.40-0.45 similarity (increased for demo)
+                    visual_threshold = 0.45  # Increased from 0.35 for better relevance
                     print(f"  [Hybrid] Searching mute videos with threshold: {visual_threshold:.2f}")
                     visual_results = self._search_with_visual_embedding(
                         visual_query_embedding, 
@@ -520,8 +522,17 @@ class VideoSearchAgent:
                 print(f"  ⚠ Visual search failed: {e}")
                 print(f"  Traceback: {traceback.format_exc()}")
         
-        # Combine and deduplicate results
+        # Combine and deduplicate results with stricter quality checks
         combined_results = self._merge_search_results(text_results, visual_results, top_k)
+        
+        # Final quality check: ensure top result meets minimum quality
+        if combined_results:
+            top_similarity = combined_results[0]['similarity']
+            # Require top result to be at least 0.50 (increased from 0.35)
+            MIN_TOP_QUALITY = 0.50
+            if top_similarity < MIN_TOP_QUALITY:
+                print(f"  ⚠ Top result similarity ({top_similarity:.3f}) below quality threshold ({MIN_TOP_QUALITY:.2f}), returning no results")
+                return []
         
         return combined_results
     
@@ -627,7 +638,7 @@ class VideoSearchAgent:
                             continue
                 
                 # Enhanced threshold: require higher similarity for video clip search
-                enhanced_threshold = min_similarity + 0.15  # Increased from 0.10 for better accuracy
+                enhanced_threshold = min_similarity + 0.20  # Increased from 0.15 for better accuracy
                 if final_similarity < enhanced_threshold:
                     continue
                 
@@ -745,7 +756,7 @@ class VideoSearchAgent:
                 similarity = np.dot(query_embedding, segment_embedding)
                 
                 # Enhanced threshold: stricter for image search to avoid irrelevant results
-                enhanced_threshold = max(0.60, min_similarity - 0.05)  # Increased from 0.40 for better relevance
+                enhanced_threshold = max(0.70, min_similarity - 0.05)  # Increased from 0.60 for better relevance
                 if similarity < enhanced_threshold:
                     continue
                 
@@ -769,7 +780,7 @@ class VideoSearchAgent:
         best_similarity = results[0]["similarity"]
         
         # Quality check 1: Top result must meet minimum quality (increased for better relevance)
-        MIN_QUALITY_SIMILARITY = 0.45  # Increased from 0.30
+        MIN_QUALITY_SIMILARITY = 0.55  # Increased from 0.45 for demo accuracy
         if best_similarity < MIN_QUALITY_SIMILARITY:
             print(f"  ⚠ Best match similarity ({best_similarity:.3f}) is below quality threshold ({MIN_QUALITY_SIMILARITY:.2f})")
             return []
@@ -784,7 +795,7 @@ class VideoSearchAgent:
         # Filter: Keep only results reasonably close to the best match (removes outliers)
         # Stricter cutoff for better relevance
         if len(results) > top_k:
-            similarity_cutoff = best_similarity - 0.10  # Reduced from 0.15 for stricter filtering
+            similarity_cutoff = best_similarity - 0.08  # Reduced from 0.10 for stricter filtering
             results = [r for r in results if r["similarity"] >= similarity_cutoff]
         
         print(f"  ✓ Found {len(results)} visually similar segment(s) (best: {best_similarity:.3f})")
@@ -861,8 +872,8 @@ class VideoSearchAgent:
                 similarity_scores.append(similarity)
                 
                 # Enhanced filtering: require higher similarity for better relevance
-                # Add a small buffer to ensure only truly relevant results
-                enhanced_threshold = min_similarity + 0.05
+                # Add a buffer to ensure only truly relevant results (increased for demo)
+                enhanced_threshold = min_similarity + 0.10  # Increased from 0.05 for better accuracy
                 if similarity < enhanced_threshold:
                     continue
                 
@@ -895,8 +906,8 @@ class VideoSearchAgent:
         result_map = {}
         
         # Increased minimum quality threshold - filter out low-quality results
-        # Results below 0.35 are likely not relevant (increased from 0.25)
-        MIN_QUALITY_THRESHOLD = 0.35
+        # Results below 0.50 are likely not relevant (increased from 0.35 for demo)
+        MIN_QUALITY_THRESHOLD = 0.50
         
         # Add text results (already filtered by threshold in _search_with_embedding)
         for result in text_results:
@@ -925,6 +936,14 @@ class VideoSearchAgent:
         if merged_results and merged_results[0]['similarity'] < MIN_QUALITY_THRESHOLD:
             print(f"  ⚠ Top result similarity ({merged_results[0]['similarity']:.3f}) below quality threshold ({MIN_QUALITY_THRESHOLD:.2f}), returning no results")
             return []
+        
+        # Additional quality check: ensure results are reasonably close to top result
+        if len(merged_results) > 1:
+            top_sim = merged_results[0]['similarity']
+            # Filter out results that are significantly worse than top result
+            # Only keep results within 0.15 of top result (stricter than before)
+            quality_cutoff = top_sim - 0.15
+            merged_results = [r for r in merged_results if r['similarity'] >= quality_cutoff]
         
         return merged_results[:top_k]
     
@@ -975,8 +994,8 @@ class VideoSearchAgent:
                 similarity = np.dot(query_norm, segment_norm)
                 
                 # Enhanced filtering: require higher similarity for better relevance
-                # Add a small buffer to ensure only truly relevant results
-                enhanced_threshold = min_similarity + 0.05
+                # Add a buffer to ensure only truly relevant results (increased for demo)
+                enhanced_threshold = min_similarity + 0.10  # Increased from 0.05 for better accuracy
                 if similarity < enhanced_threshold:
                     continue
                 

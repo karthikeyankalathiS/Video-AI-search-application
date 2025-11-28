@@ -898,28 +898,60 @@ async function generateRAGHighlight() {
         return;
     }
     
+    // Check if currentRAGResults is available
+    if (!currentRAGResults || currentRAGResults.length === 0) {
+        alert('No RAG results available. Please run a RAG query first.');
+        return;
+    }
+    
     // Convert selected IDs to result format
     const selectedSegments = [];
     for (const resultId of selected) {
         // Parse resultId: rag_videoId_startTime_endTime
-        const parts = resultId.replace('rag_', '').split('_');
-        if (parts.length >= 3) {
-            const videoId = parts[0];
-            const startTime = parseFloat(parts[parts.length - 2]);
-            const endTime = parseFloat(parts[parts.length - 1]);
-            
-            // Find matching source from currentRAGResults
-            const source = currentRAGResults.find(s => 
-                s.video_id === videoId && 
-                Math.abs(s.start_time - startTime) < 0.1
-            );
-            
-            if (source) {
-                selectedSegments.push({
-                    video_id: source.video_id,
-                    start_time: source.start_time,
-                    end_time: source.end_time
-                });
+        // Since video_id can contain underscores, parse from the end
+        const withoutPrefix = resultId.replace(/^rag_/, '');
+        
+        // Try to find matching source by matching the resultId pattern
+        // The resultId format is: rag_videoId_startTime_endTime
+        // We'll match by finding the source that would generate this exact resultId
+        const source = currentRAGResults.find(s => {
+            // Ensure numeric values are properly formatted (handle both string and number types)
+            const startTime = typeof s.start_time === 'number' ? s.start_time : parseFloat(s.start_time);
+            const endTime = typeof s.end_time === 'number' ? s.end_time : parseFloat(s.end_time);
+            const expectedId = `rag_${s.video_id}_${startTime}_${endTime}`;
+            return expectedId === resultId;
+        });
+        
+        if (source) {
+            selectedSegments.push({
+                video_id: source.video_id,
+                start_time: typeof source.start_time === 'number' ? source.start_time : parseFloat(source.start_time),
+                end_time: typeof source.end_time === 'number' ? source.end_time : parseFloat(source.end_time)
+            });
+        } else {
+            // Fallback: try parsing if direct match fails
+            // Extract last two numbers (end_time and start_time) from the end
+            // Pattern: everything before the last two underscore-separated numbers
+            const match = withoutPrefix.match(/^(.+)_([0-9.]+)_([0-9.]+)$/);
+            if (match) {
+                const videoId = match[1];
+                const startTime = parseFloat(match[2]);
+                const endTime = parseFloat(match[3]);
+                
+                // Find matching source
+                const fallbackSource = currentRAGResults.find(s => 
+                    s.video_id === videoId && 
+                    Math.abs(parseFloat(s.start_time) - startTime) < 0.1 &&
+                    Math.abs(parseFloat(s.end_time) - endTime) < 0.1
+                );
+                
+                if (fallbackSource) {
+                    selectedSegments.push({
+                        video_id: fallbackSource.video_id,
+                        start_time: parseFloat(fallbackSource.start_time),
+                        end_time: parseFloat(fallbackSource.end_time)
+                    });
+                }
             }
         }
     }

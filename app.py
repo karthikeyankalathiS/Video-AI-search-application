@@ -162,12 +162,27 @@ def search():
         if not agent.video_index:
             agent.load_index(current_index_path)
         
-        # Search
+        # Search with enhanced filtering
         results = agent.search_by_text(query, top_k=top_k)
+        
+        # Additional quality filtering at API level for demo accuracy
+        # Filter out results with similarity below 0.50
+        MIN_API_SIMILARITY = 0.50
+        filtered_results = [r for r in results if r['similarity'] >= MIN_API_SIMILARITY]
+        
+        # If we filtered out all results but had some, return empty with message
+        if not filtered_results and results:
+            return jsonify({
+                'status': 'success',
+                'query': query,
+                'results': [],
+                'count': 0,
+                'message': 'No results found above minimum quality threshold. Try rephrasing your query.'
+            })
         
         # Format results
         formatted_results = []
-        for i, result in enumerate(results, 1):
+        for i, result in enumerate(filtered_results, 1):
             formatted_results.append({
                 'rank': i,
                 'similarity': round(result['similarity'], 3),
@@ -218,8 +233,8 @@ def search_clip():
             results = agent.search_by_video_clip(filepath, top_k=top_k)
             
             # Additional filtering: remove results with very low similarity
-            # This helps prevent irrelevant results from being returned
-            min_acceptable_similarity = 0.60  # Minimum acceptable similarity score
+            # This helps prevent irrelevant results from being returned (increased for demo)
+            min_acceptable_similarity = 0.70  # Increased from 0.60 for better accuracy
             filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
             
             if not filtered_results and results:
@@ -309,9 +324,22 @@ def search_audio():
             # Search with audio
             results = agent.search_by_audio(filepath, top_k=top_k)
             
+            # Additional filtering: remove results with very low similarity
+            min_acceptable_similarity = 0.50  # Minimum acceptable similarity for audio search
+            filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
+            
+            if not filtered_results and results:
+                # If all results were filtered but we had some, return empty with message
+                return jsonify({
+                    'status': 'success',
+                    'message': 'No results found above minimum similarity threshold (0.50). The audio query may not be relevant to the indexed videos.',
+                    'results': [],
+                    'count': 0
+                })
+            
             # Format results
             formatted_results = []
-            for i, result in enumerate(results, 1):
+            for i, result in enumerate(filtered_results, 1):
                 formatted_results.append({
                     'rank': i,
                     'similarity': round(result['similarity'], 3),
@@ -393,7 +421,7 @@ def search_image():
             results = agent.search_by_image(filepath, top_k=top_k)
             
             # Additional filtering: remove results with very low similarity
-            min_acceptable_similarity = 0.65  # Minimum acceptable similarity for image search
+            min_acceptable_similarity = 0.75  # Increased from 0.65 for better accuracy
             filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
             
             if not filtered_results and results:
