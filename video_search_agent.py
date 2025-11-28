@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 import numpy as np
 from datetime import timedelta
+import re
 
 # Core dependencies
 import whisper
@@ -84,13 +85,13 @@ class VideoSearchAgent:
         # Similarity threshold - filter results below this score
         # Lower threshold = more results (but may include irrelevant ones)
         # Higher threshold = fewer but more relevant results
-        # Increased thresholds for better relevance and accuracy (DEMO OPTIMIZED)
+        # Increased thresholds for better relevance and accuracy (DEMO OPTIMIZED - AGGRESSIVE)
         if self.use_openai_embeddings:
-            self.similarity_threshold = 0.65  # Increased from 0.55 for much stricter relevance
-            self.visual_similarity_threshold = 0.80  # Increased from 0.75 for stricter image matching
+            self.similarity_threshold = 0.72  # Increased from 0.65 for much stricter relevance
+            self.visual_similarity_threshold = 0.85  # Increased from 0.80 for stricter image matching
         else:
-            self.similarity_threshold = 0.55   # Increased from 0.45 for stricter relevance
-            self.visual_similarity_threshold = 0.75  # Increased from 0.70 for stricter image matching
+            self.similarity_threshold = 0.62   # Increased from 0.55 for stricter relevance
+            self.visual_similarity_threshold = 0.80  # Increased from 0.75 for stricter image matching
         
         # Load CLIP model for visual embeddings (for mute videos and image queries)
         self.clip_model = None
@@ -466,11 +467,46 @@ class VideoSearchAgent:
         else:
             return self.embedding_model.encode(text)
     
+    def _extract_keywords(self, text: str) -> List[str]:
+        """Extract meaningful keywords from query text."""
+        # Remove common stop words and extract meaningful terms
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whom', 'where', 'when', 'why', 'how'}
+        
+        # Convert to lowercase and split
+        words = re.findall(r'\b\w+\b', text.lower())
+        # Filter out stop words and short words
+        keywords = [w for w in words if w not in stop_words and len(w) > 2]
+        return keywords
+    
+    def _calculate_keyword_relevance(self, query_keywords: List[str], segment_text: str) -> float:
+        """Calculate keyword-based relevance score for a segment."""
+        if not query_keywords or not segment_text:
+            return 0.0
+        
+        segment_lower = segment_text.lower()
+        matches = 0
+        total_keywords = len(query_keywords)
+        
+        for keyword in query_keywords:
+            # Check for exact word match (word boundary)
+            if re.search(r'\b' + re.escape(keyword) + r'\b', segment_lower):
+                matches += 1
+            # Also check for partial matches (for compound words)
+            elif keyword in segment_lower:
+                matches += 0.5
+        
+        if total_keywords == 0:
+            return 0.0
+        
+        # Return relevance score between 0 and 1
+        return matches / total_keywords
+    
     def search_by_text(self, query: str, top_k: int = 5, min_similarity: float = None) -> List[Dict]:
         """
         Search for relevant segments using a text query.
         Uses hybrid search: text embeddings for videos with audio/OCR, 
         and CLIP text-to-visual embeddings for mute videos.
+        Enhanced with keyword-based relevance scoring for better accuracy.
         
         Args:
             query: Natural language query
@@ -481,14 +517,18 @@ class VideoSearchAgent:
         """
         print(f"\nSearching with text query: '{query}'")
         
+        # Extract keywords for additional relevance scoring
+        query_keywords = self._extract_keywords(query)
+        print(f"  Extracted keywords: {query_keywords}")
+        
         # Create text query embedding
         text_query_embedding = self._get_text_embedding(query)
         min_sim = min_similarity if min_similarity is not None else self.similarity_threshold
         
         # Search with text embeddings (for videos with audio/OCR)
         # Use stricter threshold - require higher similarity for better accuracy
-        enhanced_min_sim = min_sim + 0.08  # Add buffer for better quality
-        text_results = self._search_with_embedding(text_query_embedding, top_k * 3, min_similarity=enhanced_min_sim)
+        enhanced_min_sim = min_sim + 0.15  # Increased buffer for better quality
+        text_results = self._search_with_embedding(text_query_embedding, top_k * 5, min_similarity=enhanced_min_sim)
         
         # Also search mute videos using CLIP text-to-visual if available
         visual_results = []
@@ -501,8 +541,8 @@ class VideoSearchAgent:
                     print(f"  [Hybrid] Visual query embedding created (dim: {len(visual_query_embedding)})")
                     # Increased threshold for text-to-visual search for better relevance
                     # CLIP text-to-visual similarity is typically lower than image-to-image, but we still need quality
-                    # For relevant matches, we expect at least 0.40-0.45 similarity (increased for demo)
-                    visual_threshold = 0.45  # Increased from 0.35 for better relevance
+                    # For relevant matches, we expect at least 0.50 similarity (increased for better accuracy)
+                    visual_threshold = 0.50  # Increased from 0.45 for better relevance
                     print(f"  [Hybrid] Searching mute videos with threshold: {visual_threshold:.2f}")
                     visual_results = self._search_with_visual_embedding(
                         visual_query_embedding, 
@@ -523,18 +563,58 @@ class VideoSearchAgent:
                 print(f"  Traceback: {traceback.format_exc()}")
         
         # Combine and deduplicate results with stricter quality checks
-        combined_results = self._merge_search_results(text_results, visual_results, top_k)
+        combined_results = self._merge_search_results(text_results, visual_results, top_k * 2)
+        
+        # Enhanced re-ranking with keyword relevance scoring
+        if combined_results and query_keywords:
+            print(f"  Re-ranking {len(combined_results)} results with keyword relevance...")
+            for result in combined_results:
+                segment = result.get('segment', {})
+                segment_text = segment.get('text', '').strip()
+                segment_ocr = segment.get('on_screen_text', '').strip()
+                combined_text = segment.get('combined_text', '').strip() or segment_text or segment_ocr
+                
+                # Calculate keyword relevance
+                keyword_score = self._calculate_keyword_relevance(query_keywords, combined_text)
+                
+                # Boost similarity score based on keyword matches
+                # If keywords match well, boost the score; if not, penalize
+                if keyword_score > 0.5:  # Good keyword match
+                    result['similarity'] = min(1.0, result['similarity'] + 0.15 * keyword_score)
+                elif keyword_score < 0.2:  # Poor keyword match
+                    result['similarity'] = max(0.0, result['similarity'] - 0.20)
+                
+                result['keyword_relevance'] = keyword_score
+            
+            # Re-sort by updated similarity scores
+            combined_results.sort(key=lambda x: x['similarity'], reverse=True)
         
         # Final quality check: ensure top result meets minimum quality
         if combined_results:
             top_similarity = combined_results[0]['similarity']
-            # Require top result to be at least 0.50 (increased from 0.35)
-            MIN_TOP_QUALITY = 0.50
+            # Require top result to be at least 0.60 (increased from 0.50)
+            MIN_TOP_QUALITY = 0.60
             if top_similarity < MIN_TOP_QUALITY:
                 print(f"  ⚠ Top result similarity ({top_similarity:.3f}) below quality threshold ({MIN_TOP_QUALITY:.2f}), returning no results")
                 return []
+            
+            # Additional check: if top result has very low keyword relevance, be more strict
+            if query_keywords and combined_results[0].get('keyword_relevance', 0) < 0.1:
+                # Require even higher similarity if keywords don't match
+                if top_similarity < 0.70:
+                    print(f"  ⚠ Top result has low keyword relevance and similarity below 0.70, returning no results")
+                    return []
         
-        return combined_results
+        # Final filtering: only return top_k results that meet quality standards
+        final_results = []
+        for result in combined_results[:top_k * 2]:
+            # Require minimum similarity of 0.60 after re-ranking
+            if result['similarity'] >= 0.60:
+                final_results.append(result)
+            else:
+                break  # Since results are sorted, we can stop here
+        
+        return final_results[:top_k]
     
     def search_by_video_clip(self, clip_path: str, top_k: int = 5) -> List[Dict]:
         """
@@ -873,7 +953,7 @@ class VideoSearchAgent:
                 
                 # Enhanced filtering: require higher similarity for better relevance
                 # Add a buffer to ensure only truly relevant results (increased for demo)
-                enhanced_threshold = min_similarity + 0.10  # Increased from 0.05 for better accuracy
+                enhanced_threshold = min_similarity + 0.15  # Increased from 0.10 for better accuracy
                 if similarity < enhanced_threshold:
                     continue
                 
@@ -906,8 +986,8 @@ class VideoSearchAgent:
         result_map = {}
         
         # Increased minimum quality threshold - filter out low-quality results
-        # Results below 0.50 are likely not relevant (increased from 0.35 for demo)
-        MIN_QUALITY_THRESHOLD = 0.50
+        # Results below 0.60 are likely not relevant (increased from 0.50 for better accuracy)
+        MIN_QUALITY_THRESHOLD = 0.60
         
         # Add text results (already filtered by threshold in _search_with_embedding)
         for result in text_results:
@@ -941,8 +1021,8 @@ class VideoSearchAgent:
         if len(merged_results) > 1:
             top_sim = merged_results[0]['similarity']
             # Filter out results that are significantly worse than top result
-            # Only keep results within 0.15 of top result (stricter than before)
-            quality_cutoff = top_sim - 0.15
+            # Only keep results within 0.12 of top result (stricter than before)
+            quality_cutoff = top_sim - 0.12
             merged_results = [r for r in merged_results if r['similarity'] >= quality_cutoff]
         
         return merged_results[:top_k]
@@ -995,7 +1075,7 @@ class VideoSearchAgent:
                 
                 # Enhanced filtering: require higher similarity for better relevance
                 # Add a buffer to ensure only truly relevant results (increased for demo)
-                enhanced_threshold = min_similarity + 0.10  # Increased from 0.05 for better accuracy
+                enhanced_threshold = min_similarity + 0.15  # Increased from 0.10 for better accuracy
                 if similarity < enhanced_threshold:
                     continue
                 

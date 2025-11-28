@@ -166,8 +166,8 @@ def search():
         results = agent.search_by_text(query, top_k=top_k)
         
         # Additional quality filtering at API level for demo accuracy
-        # Filter out results with similarity below 0.50
-        MIN_API_SIMILARITY = 0.50
+        # Filter out results with similarity below 0.60 (increased for better accuracy)
+        MIN_API_SIMILARITY = 0.60
         filtered_results = [r for r in results if r['similarity'] >= MIN_API_SIMILARITY]
         
         # If we filtered out all results but had some, return empty with message
@@ -234,7 +234,7 @@ def search_clip():
             
             # Additional filtering: remove results with very low similarity
             # This helps prevent irrelevant results from being returned (increased for demo)
-            min_acceptable_similarity = 0.70  # Increased from 0.60 for better accuracy
+            min_acceptable_similarity = 0.75  # Increased from 0.70 for better accuracy
             filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
             
             if not filtered_results and results:
@@ -325,7 +325,7 @@ def search_audio():
             results = agent.search_by_audio(filepath, top_k=top_k)
             
             # Additional filtering: remove results with very low similarity
-            min_acceptable_similarity = 0.50  # Minimum acceptable similarity for audio search
+            min_acceptable_similarity = 0.60  # Increased from 0.50 for better accuracy
             filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
             
             if not filtered_results and results:
@@ -421,7 +421,7 @@ def search_image():
             results = agent.search_by_image(filepath, top_k=top_k)
             
             # Additional filtering: remove results with very low similarity
-            min_acceptable_similarity = 0.75  # Increased from 0.65 for better accuracy
+            min_acceptable_similarity = 0.80  # Increased from 0.75 for better accuracy
             filtered_results = [r for r in results if r['similarity'] >= min_acceptable_similarity]
             
             if not filtered_results and results:
