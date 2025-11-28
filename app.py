@@ -30,13 +30,6 @@ agent = None
 rag_agent = None
 current_index_path = None
 
-# Progress tracking for indexing
-indexing_progress = {
-    'current': 0,
-    'total': 0,
-    'current_video': '',
-    'status': 'idle'  # idle, processing, complete, error
-}
 
 def allowed_file(filename):
     """Check if file extension is allowed."""
@@ -79,7 +72,7 @@ def initialize_agent():
 @app.route('/api/index', methods=['POST'])
 def index_videos():
     """Index uploaded videos."""
-    global agent, current_index_path, indexing_progress
+    global agent, current_index_path
     
     if agent is None:
         return jsonify({'status': 'error', 'message': 'Agent not initialized'}), 400
@@ -103,18 +96,8 @@ def index_videos():
         if not video_paths:
             return jsonify({'status': 'error', 'message': 'No valid video files'}), 400
         
-        # Initialize progress tracking
-        indexing_progress = {
-            'current': 0,
-            'total': len(video_paths),
-            'current_video': '',
-            'status': 'processing'
-        }
-        
-        # Process videos with progress tracking
-        for idx, video_path in enumerate(video_paths):
-            indexing_progress['current'] = idx + 1
-            indexing_progress['current_video'] = os.path.basename(video_path)
+        # Process videos
+        for video_path in video_paths:
             agent.process_video(video_path)
         
         # Save index
@@ -125,9 +108,6 @@ def index_videos():
         # Get statistics
         total_segments = sum(len(v['segments']) for v in agent.video_index)
         
-        # Mark as complete
-        indexing_progress['status'] = 'complete'
-        
         return jsonify({
             'status': 'success',
             'message': f'Indexed {len(video_paths)} video(s)',
@@ -136,7 +116,6 @@ def index_videos():
             'index_path': current_index_path
         })
     except Exception as e:
-        indexing_progress['status'] = 'error'
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/search', methods=['POST'])
@@ -698,21 +677,6 @@ def get_status():
     
     return jsonify(status)
 
-@app.route('/api/indexing-progress', methods=['GET'])
-def get_indexing_progress():
-    """Get current indexing progress."""
-    global indexing_progress
-    progress_percent = 0
-    if indexing_progress['total'] > 0:
-        progress_percent = int((indexing_progress['current'] / indexing_progress['total']) * 100)
-    
-    return jsonify({
-        'progress': progress_percent,
-        'current': indexing_progress['current'],
-        'total': indexing_progress['total'],
-        'current_video': indexing_progress['current_video'],
-        'status': indexing_progress['status']
-    })
 
 @app.route('/api/videos', methods=['GET'])
 def get_videos():

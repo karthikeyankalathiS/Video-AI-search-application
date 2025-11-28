@@ -421,38 +421,10 @@ async function handleIndex(e) {
     progressDiv.style.display = 'block';
     updateStatus('Indexing videos... This may take a few minutes.', 'info');
     
-    // Reset progress
+    // Show simple loading state (no polling)
     progressBar.style.width = '0%';
     progressPercent.textContent = '0%';
-    progressText.textContent = 'Preparing...';
-    
-    // Start progress polling
-    const progressInterval = setInterval(async () => {
-        try {
-            const progressResponse = await fetch('/api/indexing-progress');
-            const progressData = await progressResponse.json();
-            
-            if (progressData.status === 'processing') {
-                const percent = progressData.progress || 0;
-                progressBar.style.width = `${percent}%`;
-                progressPercent.textContent = `${percent}%`;
-                if (progressData.total > 0) {
-                    progressText.textContent = `Processing ${progressData.current} of ${progressData.total} videos: ${progressData.current_video || 'Preparing...'}`;
-                } else {
-                    progressText.textContent = progressData.current_video || 'Preparing...';
-                }
-            } else if (progressData.status === 'complete' || progressData.status === 'error') {
-                clearInterval(progressInterval);
-                if (progressData.status === 'complete') {
-                    progressBar.style.width = '100%';
-                    progressPercent.textContent = '100%';
-                    progressText.textContent = 'Indexing complete!';
-                }
-            }
-        } catch (err) {
-            console.error('Error fetching progress:', err);
-        }
-    }, 500); // Poll every 500ms
+    progressText.textContent = 'Processing videos... Please wait.';
     
     try {
         const response = await fetch('/api/index', {
@@ -462,8 +434,7 @@ async function handleIndex(e) {
         
         const data = await response.json();
         
-        // Clear progress polling
-        clearInterval(progressInterval);
+        // Hide progress
         progressDiv.style.display = 'none';
         
         if (data.status === 'success') {
@@ -485,7 +456,6 @@ async function handleIndex(e) {
             throw new Error(data.message);
         }
     } catch (error) {
-        clearInterval(progressInterval);
         progressDiv.style.display = 'none';
         resultBox.style.display = 'block';
         resultBox.innerHTML = `<p style="color: red;"><i class="fas fa-exclamation-circle"></i> Error: ${error.message}</p>`;
@@ -803,10 +773,6 @@ function displayRAGSources(sources, container) {
                 <div class="result-actions">
                     <button class="btn-preview" onclick="previewRAGSegment('${source.video_id}', ${source.start_time}, ${source.end_time})">
                         Preview Segment
-                    </button>
-                    <button class="btn-view-original" onclick="openOriginalVideo('${source.video_id.replace(/'/g, "\\'")}')">
-                        <i class="fas fa-external-link-alt"></i>
-                        View Original Video
                     </button>
                 </div>
             </div>
@@ -1148,11 +1114,6 @@ function displayResults(results, container, resultsType = 'text') {
                     <i class="fas fa-play"></i>
                     Preview Segment
                 </button>
-                <button class="btn-view-original" data-video-id="${result.video_id}"
-                        onclick="event.stopPropagation(); window.openOriginalVideo('${result.video_id.replace(/'/g, "\\'")}')">
-                    <i class="fas fa-external-link-alt"></i>
-                    View Original Video
-                </button>
             </div>
         `;
         
@@ -1315,19 +1276,6 @@ function updateSelectionCount() {
 }
 
 // Preview video segment (expose globally for onclick handlers)
-// Open original video file in new tab
-window.openOriginalVideo = function(videoId) {
-    try {
-        // Construct the video URL - the backend will handle finding the file
-        const videoUrl = `/api/video/${encodeURIComponent(videoId)}`;
-        // Open in new tab
-        window.open(videoUrl, '_blank');
-    } catch (error) {
-        console.error('Error opening original video:', error);
-        alert('Error opening video: ' + error.message);
-    }
-};
-
 window.previewSegment = async function(videoId, startTime, endTime) {
     const previewModal = document.getElementById('previewModal') || createPreviewModal();
     previewModal.style.display = 'block';
